@@ -1,0 +1,7 @@
+
+== Logic of checking for an update
+
+# Compare last modified.  If same, assume identity.  If fail, continue.
+# Compare Adler-32.  If same, assume identity.  If fail, re-compute.
+
+

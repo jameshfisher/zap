@@ -32,6 +32,7 @@ import getopt
 import gzip
 import commands
 from mimetypes import guess_type
+from zlib import adler32
 
 helptext = """
 Usage:
@@ -86,16 +87,27 @@ encoders = {    # A dictionary of all the encoders we know about.
     'compress': Encoder('compress', '.Z', 'application/x-compress')     # On Ubuntu, this requires 'sudo apt-get install ncompress'
     }
 
-hidden = '.zap' # The hidden directory in which we store files.
+hidden = '.zap'			# The hidden directory in which we store files.
+stamp_ext = ".stamp"	# The extension we use on timestamps.
+adler_ext = ".adler32"	# The extension we use for Adler-32 hashes.
 
 def die(dietext='Unknown error'):
     # A little helper function to die with an error.
     sys.stderr.writelines("ERROR: "+dietext+"\n")
     sys.exit(1)
 
+def read(path):
+    f = open(path, 'r')
+    t = f.read()
+    f.close()
+    return t
+
+def write(path, data):
+    f = open(path, 'w')
+    f.write(data)
+    f.close()
+
 def init_file(path, init_encodings):
-    if isdir(path):
-        die("init_file should only be called on a file.")
     dirname, basename = split(path)
     if splitext(basename)[1] in ['.zip', '.gz', '.bzip2', '.lzma', '.jpeg', '.jpg', '.png', '.gif']:
         # Files that are inappropriate for compression.
@@ -111,6 +123,8 @@ def init_file(path, init_encodings):
         #sys.stderr.write( "Making %s of '%s' in '%s' ..." % (encoding, path, zipped) +"\n")
         commands.getoutput("cp -f %s %s" % (path, zipped))
         commands.getoutput( "%s -f %s" % (encoders[encoding].binary, zipped) )
+        commands.getoutput("stat -c %%y %s > %s.stamp" % (path, zipped) )  # Keep a record of the timestamp of the compressed file.
+        write(zipped+".adler32", str(adler32(read(path))))   # Keep a hash of the file, in case the timestamp fails.
 
 def init(path, init_encodings=encoders.keys(), recursive=False):
     """
@@ -165,20 +179,28 @@ def get(path, get_encodings, miss="ok"):
     type = guess_type(path)[0]
     
     if miss=="no":
-        preferred = get_encodings[0]
-        init_file(path, [preferred])    # Initialize the preferred encoding, so it'll be found below.  (We rely on init_file to be intelligent enough to recognise if the file is already init'd.)
+        # Initialize the preferred encoding, so it'll be found below.
+        # (We rely on init_file to be intelligent enough to recognise if the file is already init'd.)
+        init_file(path, [get_encodings[0]])    
     
     dirname, basename = split(path)
     zapdir = join(dirname, hidden)
     
     for encoding in get_encodings:
-        lookat = join(zapdir, encoding, basename) + encoders[encoding].ext
-        if exists(lookat):
+        common_base = join(zapdir, encoding, basename)
+        lookat = common_base + encoders[encoding].ext
+        stamp_path = common_base + stamp_ext
+        adler_path = common_base + adler_ext
+        if exists(lookat) and (
+				(commands.getoutput("stat -c %%y %s" % path ) == read(stamp_path)) or
+                (str(adler32(read(path))) == read(adler_path))
+                ):
+            
             f = open(lookat, 'r')
             content = f.read()
             f.close()
-
-            sys.stderr.writelines( http_header % {
+            
+            sys.stderr.writelines(http_header % {
                 'encoding': encoders[encoding].mime,
                 'type': type
                 })
